@@ -1,0 +1,88 @@
+import { CaseData, Verdict } from "../types";
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const MODEL = "deepseek/deepseek-v3.2";
+
+const SYSTEM_INSTRUCTION = `Sen "Emekli Hakim Mahmut Tuncer"sin. 
+Kişilik: 30 yıl ağır cezada dirsek çürütmüş, hafif bıkkın, görmüş geçirmiş, hukuk terimlerini mahalle ağzıyla harmanlayan eski bir reissin. 
+Sivri dillisin ama adilsin. Mantık hatalarını (fallacy) hemen yakalarsın. 
+Gençlerin "trip", "ghostlama", "story atma" gibi dertlerine hem hakimsin hem de "bizim zamanımızda böyle miydi" diye inceden ayar verirsin.
+Mahmut Tuncer olduğun için arada "halay", "mendil", "lo lo lo" gibi ifadeler kullanabilirsin ama ciddiyetini bozma.
+Türkçe konuşuyorsun.`;
+
+async function callOpenRouter(prompt: string, isJson: boolean = false) {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": window.location.origin,
+      "X-Title": "Hakimim: Dijital Kadı",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [
+        { role: "system", content: SYSTEM_INSTRUCTION },
+        { role: "user", content: prompt }
+      ],
+      response_format: isJson ? { type: "json_object" } : undefined,
+    }),
+  });
+
+  const data = await response.json();
+  if (data.error) {
+    throw new Error(data.error.message || "OpenRouter API hatası");
+  }
+  return data.choices[0].message.content;
+}
+
+export async function generateCrossExamQuestions(caseData: CaseData) {
+  const prompt = `Dava Konusu: ${caseData.subject}
+  
+  Davacı (${caseData.party1.name}) Savunması: ${caseData.party1.defense}
+  Davalı (${caseData.party2.name}) Savunması: ${caseData.party2.defense}
+  
+  Mahmut Tuncer olarak, bu iki savunmadaki tutarsızlıkları veya eksik noktaları bul. 
+  Her iki tarafa da birer tane "terletici", "çapraz sorgu" tadında soru sor. 
+  Sorular kısa, öz ve vurucu olsun. 
+  
+  Yanıtı şu JSON formatında ver:
+  {
+    "party1Question": "soru metni",
+    "party2Question": "soru metni"
+  }`;
+
+  const content = await callOpenRouter(prompt, true);
+  return JSON.parse(content);
+}
+
+export async function generateVerdict(caseData: CaseData): Promise<Verdict> {
+  const prompt = `Dava Konusu: ${caseData.subject}
+  
+  Davacı (${caseData.party1.name}):
+  - Savunma: ${caseData.party1.defense}
+  - Çapraz Sorgu Yanıtı: ${caseData.party1.answer}
+  
+  Davalı (${caseData.party2.name}):
+  - Savunma: ${caseData.party2.defense}
+  - Çapraz Sorgu Yanıtı: ${caseData.party2.answer}
+  
+  Mahmut Tuncer olarak nihai hükmünü ver. 
+  1. Haklılık paylarını yüzde olarak belirle (toplam 100).
+  2. "Gerekçeli Karar" yaz (Mahmut Tuncer üslubuyla, halaylı mendilli ama adil).
+  3. Bir "Ceza" belirle.
+  4. Mühür metni oluştur.
+  
+  Yanıtı şu JSON formatında ver:
+  {
+    "party1Score": 60,
+    "party2Score": 40,
+    "summary": "Kısa özet karar",
+    "punishment": "Ceza metni",
+    "legalReasoning": "Gerekçeli karar metni",
+    "sealText": "Mühür metni"
+  }`;
+
+  const content = await callOpenRouter(prompt, true);
+  return JSON.parse(content);
+}

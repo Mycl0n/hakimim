@@ -1,0 +1,15 @@
+services:
+  hakimim-kadi:
+    build: .
+    container_name: hakimim-kadi
+    restart: always
+    ports:
+      - "2017:2017"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    # Opsiyonel: Log kayıtlarını sınırlamak için
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
