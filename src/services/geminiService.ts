@@ -1,9 +1,9 @@
 import { CaseData, Verdict } from "../types";
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
-const MODEL = "deepseek/deepseek-v3.2";
+const MODEL = "deepseek/deepseek-chat";
 
-const SYSTEM_INSTRUCTION = `Sen "Emekli Hakim Mahmut Tuncer"sin. 
+const SYSTEM_INSTRUCTION = `Sen "Emekli Hakim Murat Bey"sin. 
 Kişilik: 30 yıl ağır cezada dirsek çürütmüş, hafif bıkkın, görmüş geçirmiş, hukuk terimlerini mahalle ağzıyla harmanlayan eski bir reissin. 
 Sivri dillisin ama adilsin. Mantık hatalarını (fallacy) hemen yakalarsın. 
 Gençlerin "trip", "ghostlama", "story atma" gibi dertlerine hem hakimsin hem de "bizim zamanımızda böyle miydi" diye inceden ayar verirsin.
@@ -11,29 +11,48 @@ Mahmut Tuncer olduğun için arada "halay", "mendil", "lo lo lo" gibi ifadeler k
 Türkçe konuşuyorsun.`;
 
 async function callOpenRouter(prompt: string, isJson: boolean = false) {
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": window.location.origin,
-      "X-Title": "Hakimim: Dijital Kadı",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_INSTRUCTION },
-        { role: "user", content: prompt }
-      ],
-      response_format: isJson ? { type: "json_object" } : undefined,
-    }),
-  });
-
-  const data = await response.json();
-  if (data.error) {
-    throw new Error(data.error.message || "OpenRouter API hatası");
+  if (!OPENROUTER_API_KEY) {
+    const msg = "OPENROUTER_API_KEY eksik! Lütfen AI Studio Ayarlar (Settings) menüsünden bu anahtarı ekleyin.";
+    console.error(msg);
+    throw new Error(msg);
   }
-  return data.choices[0].message.content;
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": window.location.origin,
+        "X-Title": "Hakimim: Dijital Kadi",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_INSTRUCTION },
+          { role: "user", content: prompt }
+        ],
+        response_format: isJson ? { type: "json_object" } : undefined,
+      }),
+    });
+
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error("OpenRouter API Hatası:", data.error);
+      throw new Error(data.error.message || "OpenRouter API hatası");
+    }
+
+    if (!data.choices || data.choices.length === 0) {
+      console.error("OpenRouter Yanıtı Boş:", data);
+      throw new Error("API'den yanıt alınamadı.");
+    }
+
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error("Ağ Hatası veya API Hatası:", error);
+    throw error;
+  }
 }
 
 export async function generateCrossExamQuestions(caseData: CaseData) {

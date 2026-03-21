@@ -73,7 +73,8 @@ export default function App() {
       }));
       setStep('cross_exam_questions');
     } catch (err) {
-      setError('Baki Bey\'in tansiyonu çıktı, bir daha dene evladım.');
+      console.error("Hata detayı:", err);
+      setError(err instanceof Error ? err.message : 'Mahmut Tuncer\'in tansiyonu çıktı, bir daha dene evladım.');
     } finally {
       setLoading(false);
     }
@@ -86,7 +87,8 @@ export default function App() {
       setCaseData(prev => ({ ...prev, verdict }));
       setStep('verdict');
     } catch (err) {
-      setError('Karar defteri kayboldu, tekrar hüküm iste.');
+      console.error("Karar hatası:", err);
+      setError(err instanceof Error ? err.message : 'Karar defteri kayboldu, tekrar hüküm iste.');
     } finally {
       setLoading(false);
     }
@@ -207,7 +209,7 @@ export default function App() {
                   <h2 className="text-2xl font-serif">
                     {step === 'defense1' ? caseData.party1.name : caseData.party2.name} Konuşuyor...
                   </h2>
-                  <p className="text-sm text-[#5A5A40]">Savunmanı yap, Baki Bey seni dinliyor.</p>
+                  <p className="text-sm text-[#5A5A40]">Savunmanı yap, Mahmut Tuncer seni dinliyor.</p>
                 </div>
               </div>
 
@@ -230,7 +232,7 @@ export default function App() {
                 disabled={loading}
                 className="w-full py-4 bg-[#5A5A40] text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-[#4A4A30] transition-colors disabled:opacity-50"
               >
-                {loading ? 'Baki Bey Not Alıyor...' : step === 'defense1' ? 'DİĞER TARAFA GEÇ' : 'HAKİME GÖNDER'}
+                {loading ? 'Mahmut Tuncer Not Alıyor...' : step === 'defense1' ? 'DİĞER TARAFA GEÇ' : 'HAKİME GÖNDER'}
                 {!loading && <ChevronRight size={20} />}
               </button>
             </motion.div>
@@ -246,7 +248,7 @@ export default function App() {
               <div className="text-center space-y-4">
                 <Scale className="mx-auto text-[#5A5A40]" size={40} />
                 <h2 className="text-3xl font-serif italic">Çapraz Sorgu</h2>
-                <p className="text-[#5A5A40]">Baki Bey tutarsızlıkları yakaladı. Cevap verin bakayım!</p>
+                <p className="text-[#5A5A40]">Mahmut Tuncer tutarsızlıkları yakaladı. Cevap verin bakayım!</p>
               </div>
 
               <div className="space-y-6">
@@ -305,7 +307,7 @@ export default function App() {
                 />
                 <Gavel className="absolute inset-0 m-auto text-[#5A5A40]" size={32} />
               </div>
-              <h2 className="text-2xl font-serif italic">Baki Bey Kararını Yazıyor...</h2>
+              <h2 className="text-2xl font-serif italic">Mahmut Tuncer Kararını Yazıyor...</h2>
               <p className="text-[#5A5A40] animate-pulse">"Adalet yerini bulacak, sabret evladım."</p>
               <button 
                 onClick={handleNext}
@@ -313,6 +315,7 @@ export default function App() {
               >
                 KARARI GÖR
               </button>
+              {error && <p className="text-red-600 text-sm italic font-medium">! {error}</p>}
             </motion.div>
           )}
 
