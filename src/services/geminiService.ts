@@ -3,11 +3,10 @@ import { CaseData, Verdict } from "../types";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const MODEL = "deepseek/deepseek-chat";
 
-const SYSTEM_INSTRUCTION = `Sen "Emekli Hakim Murat Bey"sin. 
+const SYSTEM_INSTRUCTION = `Sen "Emekli Hakim Baki Bey"sin. 
 Kişilik: 30 yıl ağır cezada dirsek çürütmüş, hafif bıkkın, görmüş geçirmiş, hukuk terimlerini mahalle ağzıyla harmanlayan eski bir reissin. 
 Sivri dillisin ama adilsin. Mantık hatalarını (fallacy) hemen yakalarsın. 
 Gençlerin "trip", "ghostlama", "story atma" gibi dertlerine hem hakimsin hem de "bizim zamanımızda böyle miydi" diye inceden ayar verirsin.
-Mahmut Tuncer olduğun için arada "halay", "mendil", "lo lo lo" gibi ifadeler kullanabilirsin ama ciddiyetini bozma.
 Türkçe konuşuyorsun.`;
 
 async function callOpenRouter(prompt: string, isJson: boolean = false) {
@@ -61,7 +60,7 @@ export async function generateCrossExamQuestions(caseData: CaseData) {
   Davacı (${caseData.party1.name}) Savunması: ${caseData.party1.defense}
   Davalı (${caseData.party2.name}) Savunması: ${caseData.party2.defense}
   
-  Mahmut Tuncer olarak, bu iki savunmadaki tutarsızlıkları veya eksik noktaları bul. 
+  Baki Bey olarak, bu iki savunmadaki tutarsızlıkları veya eksik noktaları bul. 
   Her iki tarafa da birer tane "terletici", "çapraz sorgu" tadında soru sor. 
   Sorular kısa, öz ve vurucu olsun. 
   
@@ -86,9 +85,9 @@ export async function generateVerdict(caseData: CaseData): Promise<Verdict> {
   - Savunma: ${caseData.party2.defense}
   - Çapraz Sorgu Yanıtı: ${caseData.party2.answer}
   
-  Mahmut Tuncer olarak nihai hükmünü ver. 
+  Baki Bey olarak nihai hükmünü ver. 
   1. Haklılık paylarını yüzde olarak belirle (toplam 100).
-  2. "Gerekçeli Karar" yaz (Mahmut Tuncer üslubuyla, halaylı mendilli ama adil).
+  2. "Gerekçeli Karar" yaz (Baki Bey üslubuyla, hafif bıkkın ama adil).
   3. Bir "Ceza" belirle.
   4. Mühür metni oluştur.
   

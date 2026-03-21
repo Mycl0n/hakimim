@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "displayName": { "type": "string", "description": "The display name of the user." },
+        "email": { "type": "string", "description": "The email address of the user." },
+        "photoURL": { "type": "string", "description": "The photo URL of the user." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user was created." }
+      },
+      "required": ["uid", "displayName", "email"]
+    },
+    "Case": {
+      "title": "Legal Case",
+      "description": "Stores information about a legal case between two parties.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the case." },
+        "subject": { "type": "string", "description": "The subject of the case." },
+        "status": { 
+          "type": "string", 
+          "enum": ["setup", "defense1", "defense2", "cross_exam", "verdict"],
+          "description": "The current status of the case." 
+        },
+        "party1": {
+          "type": "object",
+          "properties": {
+            "uid": { "type": "string" },
+            "name": { "type": "string" },
+            "defense": { "type": "string" },
+            "question": { "type": "string" },
+            "answer": { "type": "string" }
+          }
+        },
+        "party2": {
+          "type": "object",
+          "properties": {
+            "uid": { "type": "string" },
+            "name": { "type": "string" },
+            "email": { "type": "string", "description": "The email of the defendant to invite them." },
+            "defense": { "type": "string" },
+            "question": { "type": "string" },
+            "answer": { "type": "string" }
+          }
+        },
+        "verdict": {
+          "type": "object",
+          "properties": {
+            "party1Score": { "type": "number" },
+            "party2Score": { "type": "number" },
+            "summary": { "type": "string" },
+            "punishment": { "type": "string" },
+            "legalReasoning": { "type": "string" },
+            "sealText": { "type": "string" }
+          }
+        },
+        "createdBy": { "type": "string", "description": "The UID of the user who created the case." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subject", "status", "party1", "party2", "createdBy"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles collection."
+    },
+    "/cases/{caseId}": {
+      "schema": "Case",
+      "description": "Legal cases collection."
+    }
+  }
+}
