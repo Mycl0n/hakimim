@@ -7,6 +7,7 @@ export interface Party {
   defense: string;
   question?: string;
   answer?: string;
+  isAnswerSaved?: boolean;
 }
 
 export interface CaseData {
@@ -16,6 +17,7 @@ export interface CaseData {
   party1: Party;
   party2: Party;
   verdict?: Verdict;
+  isLocal?: boolean;
   createdBy: string;
   createdAt?: any;
   updatedAt?: any;

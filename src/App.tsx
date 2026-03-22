@@ -50,8 +50,9 @@ import {
 const INITIAL_CASE: CaseData = {
   subject: '',
   status: 'setup',
-  party1: { name: '', defense: '' },
-  party2: { name: '', email: '', defense: '' },
+  party1: { name: '', defense: '', isAnswerSaved: false },
+  party2: { name: '', email: '', defense: '', isAnswerSaved: false },
+  isLocal: false,
   createdBy: ''
 };
 
@@ -88,8 +89,7 @@ export default function App() {
   const [step, setStep] = useState<Step>('intro');
   const [dashboardView, setDashboardView] = useState<'main' | 'my_cases' | 'incoming_cases' | 'history'>('main');
   const [caseData, setCaseData] = useState<CaseData>(INITIAL_CASE);
-  const [myCases, setMyCases] = useState<CaseData[]>([]);
-  const [incomingCases, setIncomingCases] = useState<CaseData[]>([]);
+  const [activeCases, setActiveCases] = useState<CaseData[]>([]);
   const [pastCases, setPastCases] = useState<CaseData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,31 +132,37 @@ export default function App() {
   useEffect(() => {
     if (!user || !user.email) return;
 
-    // 1. Cases I created (My Cases)
-    const qMy = query(
+    // 1. Active Cases (Created by me OR against me, not verdict)
+    const qMyActive = query(
       collection(db, 'cases'),
       where('createdBy', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      where('status', '!=', 'verdict')
     );
-    const unsubMy = onSnapshot(qMy, (snapshot) => {
-      const cases = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CaseData));
-      setMyCases(cases);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'cases'));
-
-    // 2. Cases opened against me (Incoming Cases)
-    const qIncoming = query(
+    const qIncomingActive = query(
       collection(db, 'cases'),
       where('party2.email', '==', user.email),
       where('status', '!=', 'verdict')
     );
-    const unsubIncoming = onSnapshot(qIncoming, (snapshot) => {
+
+    const unsubMy = onSnapshot(qMyActive, (snapshot) => {
       const cases = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CaseData));
-      setIncomingCases(cases.filter(c => c.createdBy !== user.uid));
+      setActiveCases(prev => {
+        const combined = [...cases, ...prev.filter(c => c.party2.email === user.email && c.createdBy !== user.uid)];
+        return Array.from(new Map(combined.map(item => [item.id, item])).values())
+          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      });
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'cases'));
 
-    // 3. Past Cases (All finished cases where I'm involved)
-    // Firestore doesn't support complex OR queries easily across fields, so we'll combine client-side or use multiple listeners
-    // For simplicity, let's fetch all verdict cases where user is involved
+    const unsubIncoming = onSnapshot(qIncomingActive, (snapshot) => {
+      const cases = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CaseData));
+      setActiveCases(prev => {
+        const combined = [...cases, ...prev.filter(c => c.createdBy === user.uid)];
+        return Array.from(new Map(combined.map(item => [item.id, item])).values())
+          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'cases'));
+
+    // 2. Past Cases (All finished cases where I'm involved)
     const qPast1 = query(
       collection(db, 'cases'),
       where('createdBy', '==', user.uid),
@@ -171,16 +177,18 @@ export default function App() {
     const unsubPast1 = onSnapshot(qPast1, (snap) => {
       const cases = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CaseData));
       setPastCases(prev => {
-        const combined = [...cases, ...prev.filter(c => c.createdBy !== user.uid)];
-        return Array.from(new Map(combined.map(item => [item.id, item])).values());
+        const combined = [...cases, ...prev.filter(c => c.party2.email === user.email && c.createdBy !== user.uid)];
+        return Array.from(new Map(combined.map(item => [item.id, item])).values())
+          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       });
     });
 
     const unsubPast2 = onSnapshot(qPast2, (snap) => {
       const cases = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CaseData));
       setPastCases(prev => {
-        const combined = [...cases, ...prev.filter(c => c.party2.email !== user.email)];
-        return Array.from(new Map(combined.map(item => [item.id, item])).values());
+        const combined = [...cases, ...prev.filter(c => c.createdBy === user.uid)];
+        return Array.from(new Map(combined.map(item => [item.id, item])).values())
+          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       });
     });
 
@@ -192,13 +200,71 @@ export default function App() {
     };
   }, [user]);
 
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+
+  // Request Notification Permission
+  const requestNotificationPermission = async () => {
+    if (!("Notification" in window)) return;
+    const permission = await Notification.requestPermission();
+    setNotificationsEnabled(permission === 'granted');
+  };
+
+  useEffect(() => {
+    if ("Notification" in window) {
+      setNotificationsEnabled(Notification.permission === 'granted');
+    }
+  }, []);
+
+  // Watch for case updates and notify
+  useEffect(() => {
+    if (!notificationsEnabled || activeCases.length === 0) return;
+    
+    // Simple logic: if a case status changed or a new case appeared
+    const lastCase = activeCases[0];
+    if (lastCase && lastCase.updatedAt) {
+      const now = new Date().getTime();
+      const updated = lastCase.updatedAt.toDate().getTime();
+      if (now - updated < 5000) { // If updated in last 5 seconds
+        new Notification("Dijital Kadı Güncellemesi", {
+          body: `"${lastCase.subject}" davasında yeni bir gelişme var!`,
+          icon: "/icon-192.png"
+        });
+      }
+    }
+  }, [activeCases, notificationsEnabled]);
+
   // Real-time Case Sync
   useEffect(() => {
     if (!caseData.id) return;
     const unsubscribe = onSnapshot(doc(db, 'cases', caseData.id), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data() as CaseData;
-        setCaseData({ id: snapshot.id, ...data });
+        
+        setCaseData(prev => {
+          // Preserve local unsaved changes during real-time sync
+          const isParty1 = user?.uid === data.party1.uid;
+          const isParty2 = user?.uid === data.party2.uid;
+
+          const updatedParty1 = { ...data.party1 };
+          const updatedParty2 = { ...data.party2 };
+
+          if (isParty1) {
+            if (step === 'defense1' && !data.party1.defense) updatedParty1.defense = prev.party1.defense;
+            if (step === 'cross_exam_questions' && !data.party1.isAnswerSaved) updatedParty1.answer = prev.party1.answer;
+          }
+          if (isParty2) {
+            if (step === 'defense2' && !data.party2.defense) updatedParty2.defense = prev.party2.defense;
+            if (step === 'cross_exam_questions' && !data.party2.isAnswerSaved) updatedParty2.answer = prev.party2.answer;
+          }
+
+          return { 
+            ...data, 
+            id: snapshot.id,
+            party1: updatedParty1,
+            party2: updatedParty2
+          };
+        });
+
         // Auto-advance step if remote update happens
         if (data.status !== step && data.status !== 'waiting') {
           setStep(data.status);
@@ -208,7 +274,7 @@ export default function App() {
       handleFirestoreError(err, OperationType.GET, `cases/${caseData.id}`);
     });
     return () => unsubscribe();
-  }, [caseData.id, step]);
+  }, [caseData.id, step, user?.uid]);
 
   // Handle URL Case ID (Joining a case)
   useEffect(() => {
@@ -260,7 +326,7 @@ export default function App() {
     reset();
   };
 
-  const syncCase = async (updates: any) => {
+  const syncCase = useCallback(async (updates: any) => {
     if (!caseData.id) return;
     try {
       await updateDoc(doc(db, 'cases', caseData.id), {
@@ -270,7 +336,7 @@ export default function App() {
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `cases/${caseData.id}`);
     }
-  };
+  }, [caseData.id]);
 
   const handleEmailSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -305,29 +371,73 @@ export default function App() {
     }
   };
 
-  const handleNext = async () => {
+  const handleGenerateQuestions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const questions = await generateCrossExamQuestions(caseData);
+      await syncCase({
+        status: 'cross_exam_questions',
+        'party1.question': questions.party1Question,
+        'party2.question': questions.party2Question
+      });
+      setStep('cross_exam_questions');
+    } catch (err) {
+      console.error("Hata detayı:", err);
+      setError(err instanceof Error ? err.message : 'Baki Bey\'in tansiyonu çıktı, bir daha dene evladım.');
+    } finally {
+      setLoading(false);
+    }
+  }, [caseData, syncCase]);
+
+  const handleGenerateVerdict = useCallback(async () => {
+    setLoading(true);
+    try {
+      const verdict = await generateVerdict(caseData);
+      await syncCase({
+        status: 'verdict',
+        verdict: verdict
+      });
+      setStep('verdict');
+    } catch (err) {
+      console.error("Karar hatası:", err);
+      setError(err instanceof Error ? err.message : 'Karar defteri kayboldu, tekrar hüküm iste.');
+    } finally {
+      setLoading(false);
+    }
+  }, [caseData, syncCase]);
+
+  // Auto-generate verdict when entering cross_exam_answers
+  useEffect(() => {
+    if (step === 'cross_exam_answers' && user?.uid === caseData.createdBy && !caseData.verdict && !loading && !error) {
+      handleGenerateVerdict();
+    }
+  }, [step, user?.uid, caseData.createdBy, !!caseData.verdict, loading, !!error, handleGenerateVerdict]);
+
+  const handleNext = useCallback(async () => {
     if (step === 'intro') return; // Handled by forms
     else if (step === 'dashboard') {
       setCaseData({ ...INITIAL_CASE, createdBy: user?.uid || '', party1: { ...INITIAL_CASE.party1, name: user?.displayName || '' } });
       setStep('setup');
     }
     else if (step === 'setup') {
-      if (!caseData.subject || !caseData.party1.name || !caseData.party2.name || !caseData.party2.email) {
-        setError('Evladım, isimleri, konuyu ve davalı e-postasını boş geçemezsin!');
+      if (!caseData.subject || !caseData.party1.name || !caseData.party2.name) {
+        setError('Evladım, isimleri ve konuyu boş geçemezsin!');
         return;
       }
+      const isLocal = !caseData.party2.email;
       setError(null);
       setLoading(true);
       try {
         const docRef = await addDoc(collection(db, 'cases'), {
           ...caseData,
+          isLocal,
           status: 'defense1',
           party1: { ...caseData.party1, uid: user?.uid || null },
           createdBy: user?.uid || null,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
-        setCaseData(prev => ({ ...prev, id: docRef.id, status: 'defense1' }));
+        setCaseData(prev => ({ ...prev, id: docRef.id, status: 'defense1', isLocal }));
         setStep('defense1');
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, 'cases');
@@ -365,38 +475,28 @@ export default function App() {
       });
       handleGenerateVerdict();
     }
-  };
+  }, [step, user, caseData, syncCase, handleGenerateQuestions, handleGenerateVerdict]);
 
-  const handleGenerateQuestions = async () => {
+  const handleSaveAnswer = async () => {
     setLoading(true);
     try {
-      const questions = await generateCrossExamQuestions(caseData);
-      await syncCase({
-        status: 'cross_exam_questions',
-        'party1.question': questions.party1Question,
-        'party2.question': questions.party2Question
-      });
-      setStep('cross_exam_questions');
+      if (user?.uid === caseData.party1.uid) {
+        if (!caseData.party1.answer) {
+          setError('Cevabını yazmadan kaydedemezsin!');
+          return;
+        }
+        setError(null);
+        await syncCase({ 'party1.answer': caseData.party1.answer, 'party1.isAnswerSaved': true });
+      } else if (user?.uid === caseData.party2.uid) {
+        if (!caseData.party2.answer) {
+          setError('Cevabını yazmadan kaydedemezsin!');
+          return;
+        }
+        setError(null);
+        await syncCase({ 'party2.answer': caseData.party2.answer, 'party2.isAnswerSaved': true });
+      }
     } catch (err) {
-      console.error("Hata detayı:", err);
-      setError(err instanceof Error ? err.message : 'Baki Bey\'in tansiyonu çıktı, bir daha dene evladım.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGenerateVerdict = async () => {
-    setLoading(true);
-    try {
-      const verdict = await generateVerdict(caseData);
-      await syncCase({
-        status: 'verdict',
-        verdict: verdict
-      });
-      setStep('verdict');
-    } catch (err) {
-      console.error("Karar hatası:", err);
-      setError(err instanceof Error ? err.message : 'Karar defteri kayboldu, tekrar hüküm iste.');
+      setError('Cevap kaydedilemedi, tekrar dene.');
     } finally {
       setLoading(false);
     }
@@ -417,13 +517,9 @@ export default function App() {
   };
 
   const isMyTurn = () => {
+    if (caseData.isLocal) return true;
     if (step === 'defense1') return user?.uid === caseData.party1.uid;
     if (step === 'defense2') return user?.uid === caseData.party2.uid;
-    if (step === 'cross_exam_questions') {
-      // Both need to answer, but we can check if current user has answered
-      if (user?.uid === caseData.party1.uid) return !caseData.party1.answer;
-      if (user?.uid === caseData.party2.uid) return !caseData.party2.answer;
-    }
     return true;
   };
 
@@ -436,24 +532,43 @@ export default function App() {
 
       {/* Header */}
       {user && (
-        <header className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-black/5 z-50 px-6 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2 font-serif italic text-[#5A5A40]">
-            <Gavel size={20} />
-            <span>Dijital Kadı</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              {user.photoURL && <img src={user.photoURL} alt="" className="w-8 h-8 rounded-full border border-black/10" />}
-              <span className="text-sm font-medium hidden sm:inline">{user.displayName}</span>
+        <header className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-black/5 z-50 px-4 sm:px-6 py-2 sm:py-3 flex justify-between items-center">
+          <div className="flex items-center gap-2 sm:gap-4">
+            {step !== 'dashboard' && (
+              <button 
+                onClick={reset}
+                className="p-2 hover:bg-black/5 rounded-full transition-colors text-[#5A5A40]"
+                title="Ana Sayfaya Dön"
+              >
+                <RotateCcw size={18} className="-rotate-90" />
+              </button>
+            )}
+            <div className="flex items-center gap-2 font-serif italic text-[#5A5A40]">
+              <Gavel size={18} className="sm:w-5 sm:h-5" />
+              <span className="text-sm sm:text-base font-bold">Dijital Kadı</span>
             </div>
-            <button onClick={handleLogout} className="p-2 text-[#5A5A40] hover:bg-black/5 rounded-full transition-colors">
-              <LogOut size={18} />
+          </div>
+          <div className="flex items-center gap-2 sm:gap-4">
+            {step === 'dashboard' && !notificationsEnabled && (
+              <button 
+                onClick={requestNotificationPermission}
+                className="flex items-center gap-2 text-[9px] sm:text-[10px] font-bold text-[#5A5A40]/40 hover:text-[#5A5A40] transition-colors uppercase tracking-widest"
+              >
+                <ShieldAlert size={12} /> Bildirimleri Aç
+              </button>
+            )}
+            <div className="flex items-center gap-2">
+              {user.photoURL && <img src={user.photoURL} alt="" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full border border-black/10" />}
+              <span className="text-xs sm:text-sm font-medium hidden xs:inline truncate max-w-[80px] sm:max-w-none">{user.displayName}</span>
+            </div>
+            <button onClick={handleLogout} className="p-1.5 sm:p-2 text-[#5A5A40] hover:bg-black/5 rounded-full transition-colors">
+              <LogOut size={16} className="sm:w-[18px] sm:h-[18px]" />
             </button>
           </div>
         </header>
       )}
 
-      <main className="relative max-w-2xl mx-auto px-6 py-24 min-h-screen flex flex-col justify-center">
+      <main className="relative max-w-2xl mx-auto px-4 sm:px-6 py-16 sm:py-24 min-h-screen flex flex-col justify-center">
         <AnimatePresence mode="wait">
           {step === 'intro' && (
             <motion.div
@@ -583,32 +698,32 @@ export default function App() {
 
                   <button
                     onClick={() => setDashboardView('incoming_cases')}
-                    className="group bg-white p-8 rounded-3xl border border-black/5 shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6"
+                    className="group bg-white p-6 sm:p-8 rounded-3xl border border-black/5 shadow-sm hover:shadow-md transition-all text-left flex items-center gap-4 sm:gap-6"
                   >
-                    <div className="p-4 bg-amber-600 text-white rounded-2xl group-hover:scale-110 transition-transform">
-                      <ShieldAlert size={32} />
+                    <div className="p-3 sm:p-4 bg-amber-600 text-white rounded-2xl group-hover:scale-110 transition-transform">
+                      <ShieldAlert size={28} className="sm:w-8 sm:h-8" />
                     </div>
                     <div className="flex-1">
-                      <h3 className="text-xl font-serif font-bold">Davaları Gör</h3>
-                      <p className="text-sm text-[#5A5A40]/60">Sana açılan davaları gör ve savunma yap.</p>
+                      <h3 className="text-lg sm:text-xl font-serif font-bold">Davaları Gör</h3>
+                      <p className="text-xs sm:text-sm text-[#5A5A40]/60">Aktif davalarını gör ve savunma yap.</p>
                     </div>
-                    {incomingCases.length > 0 && (
-                      <span className="bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-full animate-bounce">
-                        {incomingCases.length} YENİ
+                    {activeCases.length > 0 && (
+                      <span className="bg-red-500 text-white text-[10px] sm:text-xs font-bold px-2 sm:px-3 py-1 rounded-full animate-bounce">
+                        {activeCases.length} AKTİF
                       </span>
                     )}
                   </button>
 
                   <button
                     onClick={() => setDashboardView('history')}
-                    className="group bg-white p-8 rounded-3xl border border-black/5 shadow-sm hover:shadow-md transition-all text-left flex items-center gap-6"
+                    className="group bg-white p-6 sm:p-8 rounded-3xl border border-black/5 shadow-sm hover:shadow-md transition-all text-left flex items-center gap-4 sm:gap-6"
                   >
-                    <div className="p-4 bg-slate-600 text-white rounded-2xl group-hover:scale-110 transition-transform">
-                      <History size={32} />
+                    <div className="p-3 sm:p-4 bg-slate-600 text-white rounded-2xl group-hover:scale-110 transition-transform">
+                      <History size={28} className="sm:w-8 sm:h-8" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-serif font-bold">Geçmiş Davalar</h3>
-                      <p className="text-sm text-[#5A5A40]/60">Sonuçlanmış tüm davalarını incele.</p>
+                      <h3 className="text-lg sm:text-xl font-serif font-bold">Geçmiş Davalar</h3>
+                      <p className="text-xs sm:text-sm text-[#5A5A40]/60">Sonuçlanmış tüm davalarını incele.</p>
                     </div>
                   </button>
                 </div>
@@ -619,18 +734,18 @@ export default function App() {
                       <RotateCcw size={20} className="-rotate-90" />
                     </button>
                     <h3 className="text-xl font-serif font-bold">
-                      {dashboardView === 'incoming_cases' ? 'Sana Açılan Davalar' : 'Geçmiş Davalar'}
+                      {dashboardView === 'incoming_cases' ? 'Aktif Davalar' : 'Geçmiş Davalar'}
                     </h3>
                   </div>
 
                   <div className="grid gap-4">
-                    {(dashboardView === 'incoming_cases' ? incomingCases : pastCases).length === 0 ? (
+                    {(dashboardView === 'incoming_cases' ? activeCases : pastCases).length === 0 ? (
                       <div className="bg-white/50 border-2 border-dashed border-[#5A5A40]/20 rounded-3xl p-12 text-center space-y-4">
                         <FileText className="mx-auto text-[#5A5A40]/20" size={48} />
                         <p className="text-[#5A5A40]/60 italic">Burada henüz bir şey yok evladım.</p>
                       </div>
                     ) : (
-                      (dashboardView === 'incoming_cases' ? incomingCases : pastCases).map(c => (
+                      (dashboardView === 'incoming_cases' ? activeCases : pastCases).map(c => (
                         <button
                           key={c.id}
                           onClick={() => loadCase(c.id!)}
@@ -671,7 +786,7 @@ export default function App() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                 <div className="space-y-2">
                   <label className="text-xs uppercase tracking-widest font-semibold text-[#5A5A40]">Davacı</label>
                   <div className="relative">
@@ -681,7 +796,7 @@ export default function App() {
                       placeholder="İsim"
                       value={caseData.party1.name}
                       onChange={e => setCaseData({ ...caseData, party1: { ...caseData.party1, name: e.target.value } })}
-                      className="w-full bg-white border border-black/5 rounded-xl p-4 pl-10 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none transition-all"
+                      className="w-full bg-white border border-black/5 rounded-xl p-3 sm:p-4 pl-10 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none transition-all"
                     />
                   </div>
                 </div>
@@ -694,14 +809,14 @@ export default function App() {
                       placeholder="İsim"
                       value={caseData.party2.name}
                       onChange={e => setCaseData({ ...caseData, party2: { ...caseData.party2, name: e.target.value } })}
-                      className="w-full bg-white border border-black/5 rounded-xl p-4 pl-10 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none transition-all"
+                      className="w-full bg-white border border-black/5 rounded-xl p-3 sm:p-4 pl-10 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none transition-all"
                     />
                   </div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs uppercase tracking-widest font-semibold text-[#5A5A40]">Davalı E-Posta (Davet İçin)</label>
+                <label className="text-xs uppercase tracking-widest font-semibold text-[#5A5A40]">Davalı E-Posta (Boş bırakırsan tek telefonda yerel dava açılır)</label>
                 <div className="relative">
                   <LogIn className="absolute left-3 top-1/2 -translate-y-1/2 text-[#5A5A40]/40" size={18} />
                   <input
@@ -751,15 +866,15 @@ export default function App() {
                 </div>
               )}
 
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm border border-black/5">
-                  <MessageSquare className="text-[#5A5A40]" size={24} />
+              <div className="flex items-center gap-3 sm:gap-4">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white rounded-full flex items-center justify-center shadow-sm border border-black/5 shrink-0">
+                  <MessageSquare className="text-[#5A5A40] w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-serif">
+                  <h2 className="text-xl sm:text-2xl font-serif">
                     {step === 'defense1' ? caseData.party1.name : caseData.party2.name} Konuşuyor...
                   </h2>
-                  <p className="text-sm text-[#5A5A40]">Savunmanı yap, Baki Bey seni dinliyor.</p>
+                  <p className="text-xs sm:text-sm text-[#5A5A40]">Savunmanı yap, Baki Bey seni dinliyor.</p>
                 </div>
               </div>
 
@@ -817,13 +932,28 @@ export default function App() {
                   </div>
                   <p className="text-lg italic font-serif text-[#1A1A1A]">"{caseData.party1.question}"</p>
                   {user?.uid === caseData.party1.uid ? (
-                    <input
-                      type="text"
-                      placeholder="Cevabın..."
-                      value={caseData.party1.answer || ''}
-                      onChange={e => setCaseData({ ...caseData, party1: { ...caseData.party1, answer: e.target.value } })}
-                      className="w-full bg-[#F5F2ED] border-none rounded-xl p-4 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none"
-                    />
+                    <div className="space-y-4">
+                      <input
+                        type="text"
+                        placeholder="Cevabın..."
+                        value={caseData.party1.answer || ''}
+                        onChange={e => setCaseData({ ...caseData, party1: { ...caseData.party1, answer: e.target.value } })}
+                        className="w-full bg-[#F5F2ED] border-none rounded-xl p-4 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none"
+                      />
+                      {!caseData.party1.isAnswerSaved && (
+                        <button
+                          onClick={handleSaveAnswer}
+                          className="px-4 py-2 bg-[#5A5A40] text-white rounded-lg text-sm font-medium hover:bg-[#4A4A30] transition-colors"
+                        >
+                          Yanıtı Kaydet
+                        </button>
+                      )}
+                      {caseData.party1.isAnswerSaved && (
+                        <p className="text-xs text-green-600 font-medium flex items-center gap-1">
+                          <Check size={14} /> Yanıtın kaydedildi.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-sm text-[#5A5A40]/60 italic">{caseData.party1.answer || 'Cevap bekleniyor...'}</p>
                   )}
@@ -835,13 +965,28 @@ export default function App() {
                   </div>
                   <p className="text-lg italic font-serif text-[#1A1A1A]">"{caseData.party2.question}"</p>
                   {user?.uid === caseData.party2.uid ? (
-                    <input
-                      type="text"
-                      placeholder="Cevabın..."
-                      value={caseData.party2.answer || ''}
-                      onChange={e => setCaseData({ ...caseData, party2: { ...caseData.party2, answer: e.target.value } })}
-                      className="w-full bg-[#F5F2ED] border-none rounded-xl p-4 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none"
-                    />
+                    <div className="space-y-4">
+                      <input
+                        type="text"
+                        placeholder="Cevabın..."
+                        value={caseData.party2.answer || ''}
+                        onChange={e => setCaseData({ ...caseData, party2: { ...caseData.party2, answer: e.target.value } })}
+                        className="w-full bg-[#F5F2ED] border-none rounded-xl p-4 focus:ring-2 focus:ring-[#5A5A40]/20 outline-none"
+                      />
+                      {!caseData.party2.isAnswerSaved && (
+                        <button
+                          onClick={handleSaveAnswer}
+                          className="px-4 py-2 bg-[#5A5A40] text-white rounded-lg text-sm font-medium hover:bg-[#4A4A30] transition-colors"
+                        >
+                          Yanıtı Kaydet
+                        </button>
+                      )}
+                      {caseData.party2.isAnswerSaved && (
+                        <p className="text-xs text-green-600 font-medium flex items-center gap-1">
+                          <Check size={14} /> Yanıtın kaydedildi.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-sm text-[#5A5A40]/60 italic">{caseData.party2.answer || 'Cevap bekleniyor...'}</p>
                   )}
@@ -850,14 +995,22 @@ export default function App() {
 
               {error && <p className="text-red-600 text-sm italic font-medium">! {error}</p>}
 
-              {isMyTurn() && (
-                <button
-                  onClick={() => setStep('cross_exam_answers')}
-                  className="w-full py-4 bg-[#5A5A40] text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-[#4A4A30] transition-colors"
-                >
-                  HÜKMÜ BEKLE <ChevronRight size={20} />
-                </button>
-              )}
+              <div className="flex flex-col gap-4">
+                {user?.uid === caseData.createdBy && (
+                  <button
+                    onClick={() => syncCase({ status: 'cross_exam_answers' })}
+                    disabled={!caseData.party1.isAnswerSaved || !caseData.party2.isAnswerSaved || loading}
+                    className="w-full py-4 bg-[#5A5A40] text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-[#4A4A30] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? 'HAZIRLANIYOR...' : 'HÜKMÜ BEKLE'} <ChevronRight size={20} />
+                  </button>
+                )}
+                {user?.uid === caseData.createdBy && (!caseData.party1.isAnswerSaved || !caseData.party2.isAnswerSaved) && (
+                  <p className="text-center text-xs text-[#5A5A40]/60 italic">
+                    Hüküm için her iki tarafın da yanıtlarını "Yanıtı Kaydet" butonuyla mühürlemesi gerekir.
+                  </p>
+                )}
+              </div>
             </motion.div>
           )}
 
@@ -878,14 +1031,6 @@ export default function App() {
               </div>
               <h2 className="text-2xl font-serif italic">Baki Bey Kararını Yazıyor...</h2>
               <p className="text-[#5A5A40] animate-pulse">"Adalet yerini bulacak, sabret evladım."</p>
-              {caseData.createdBy === user?.uid && (
-                <button 
-                  onClick={handleNext}
-                  className="px-6 py-2 bg-[#5A5A40] text-white rounded-full text-sm"
-                >
-                  KARARI GÖR
-                </button>
-              )}
               {error && <p className="text-red-600 text-sm italic font-medium">! {error}</p>}
             </motion.div>
           )}
@@ -929,45 +1074,58 @@ export default function App() {
                     <p className="text-lg italic leading-relaxed">"{caseData.verdict.summary}"</p>
                   </div>
 
-                  <div className="space-y-2">
-                    <h5 className="text-sm font-bold uppercase tracking-wider text-[#5A5A40]">GEREKÇE</h5>
+                  <div className="space-y-4">
+                    <h5 className="text-sm font-bold uppercase tracking-wider text-[#5A5A40]">GEREKÇE VE HÜKÜM</h5>
                     <p className="text-sm leading-relaxed text-justify indent-8">
                       {caseData.verdict.legalReasoning}
                     </p>
-                  </div>
-
-                  <div className="mt-12 p-6 bg-[#F5F2ED] rounded-xl border-l-4 border-[#5A5A40]">
-                    <h5 className="text-xs font-bold uppercase tracking-wider text-[#5A5A40] mb-2">CEZA İNFAZI</h5>
-                    <p className="text-xl font-bold text-[#1A1A1A]">{caseData.verdict.punishment}</p>
+                    <div className="pt-4 border-t border-black/5">
+                      <p className="text-base sm:text-lg font-bold text-[#1A1A1A]">
+                        <span className="text-xs uppercase tracking-widest text-[#5A5A40] block mb-1">KARAR:</span>
+                        {caseData.verdict.punishment}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
                 {/* Seal */}
-                <div className="mt-12 flex justify-end">
-                  <div className="relative w-32 h-32 flex items-center justify-center">
+                <div className="mt-12 flex justify-end relative">
+                  <div className="relative w-32 h-32 sm:w-40 sm:h-40 flex items-center justify-center">
                     <motion.div
-                      initial={{ scale: 2, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 0.8 }}
-                      transition={{ delay: 0.5, type: 'spring' }}
-                      className="absolute inset-0 border-4 border-red-800 rounded-full flex items-center justify-center rotate-12"
+                      initial={{ scale: 3, opacity: 0, rotate: 0 }}
+                      animate={{ scale: 1, opacity: 0.5, rotate: -15 }}
+                      transition={{ delay: 0.8, type: 'spring', damping: 12 }}
+                      className="absolute inset-0 border-[4px] border-red-900/60 rounded-full flex items-center justify-center"
                     >
-                      <div className="text-center p-2">
-                        <Stamp className="mx-auto text-red-800 mb-1" size={20} />
-                        <span className="text-[10px] font-bold text-red-800 uppercase leading-tight block">
+                      <div className="text-center p-4 flex flex-col items-center justify-center">
+                        <Stamp className="text-red-900/40 mb-1" size={20} />
+                        <span className="text-[8px] sm:text-[10px] font-black text-red-900/70 uppercase leading-none tracking-tighter max-w-[70px] sm:max-w-[90px] break-words text-center">
                           {caseData.verdict.sealText}
                         </span>
+                        <div className="mt-1 text-[6px] text-red-900/30 font-mono">
+                          {caseData.id?.slice(-4).toUpperCase()}
+                        </div>
                       </div>
                     </motion.div>
                   </div>
                 </div>
               </div>
 
-              <button
-                onClick={reset}
-                className="w-full py-4 border-2 border-[#5A5A40] text-[#5A5A40] rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-[#5A5A40] hover:text-white transition-all"
-              >
-                <RotateCcw size={20} /> DASHBOARD'A DÖN
-              </button>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <button
+                  onClick={reset}
+                  className="flex-1 py-4 bg-[#5A5A40] text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-[#4A4A30] transition-colors shadow-lg"
+                >
+                  <Plus size={20} /> YENİ DAVA AÇ
+                </button>
+                <button
+                  onClick={copyShareLink}
+                  className="flex-1 py-4 bg-white border-2 border-[#5A5A40] text-[#5A5A40] rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-[#5A5A40] hover:text-white transition-all shadow-sm"
+                >
+                  {copied ? <Check size={20} /> : <Share2 size={20} />}
+                  {copied ? 'KOPYALANDI' : 'KARARI PAYLAŞ'}
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

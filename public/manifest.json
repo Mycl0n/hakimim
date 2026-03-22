@@ -1,0 +1,21 @@
+{
+  "name": "Hakimim: Dijital Kadı",
+  "short_name": "Dijital Kadı",
+  "description": "Baki Bey'in Huzurunda Adalet Arayışı",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F2ED",
+  "theme_color": "#5A5A40",
+  "icons": [
+    {
+      "src": "https://ais-pre-cikrjmmvuxhjx2r7iesv3w-591433974103.europe-west2.run.app/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://ais-pre-cikrjmmvuxhjx2r7iesv3w-591433974103.europe-west2.run.app/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

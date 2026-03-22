@@ -89,7 +89,7 @@ export async function generateVerdict(caseData: CaseData): Promise<Verdict> {
   1. Haklılık paylarını yüzde olarak belirle (toplam 100).
   2. "Gerekçeli Karar" yaz (Baki Bey üslubuyla, hafif bıkkın ama adil).
   3. Bir "Ceza" belirle.
-  4. Mühür metni oluştur.
+  4. Mühür metni oluştur (Maksimum 3-4 kelime, damganın içine sığacak şekilde kısa).
   
   Yanıtı şu JSON formatında ver:
   {
