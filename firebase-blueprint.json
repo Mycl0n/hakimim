@@ -22,7 +22,7 @@
         "subject": { "type": "string", "description": "The subject of the case." },
         "status": { 
           "type": "string", 
-          "enum": ["setup", "defense1", "defense2", "cross_exam", "verdict"],
+          "enum": ["setup", "defense1", "defense2", "cross_exam_questions", "cross_exam_answers", "waiting", "verdict"],
           "description": "The current status of the case." 
         },
         "party1": {

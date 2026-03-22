@@ -33,24 +33,33 @@ service cloud.firestore {
       // Allow read if owner, or if assigned party2 (by UID or Email)
       allow read: if isAuthenticated() && (
         resource.data.createdBy == request.auth.uid || 
-        resource.data.party2.uid == request.auth.uid ||
-        resource.data.party2.email == request.auth.token.email
+        (resource.data.party1 != null && resource.data.party1.uid == request.auth.uid) ||
+        (resource.data.party2 != null && (
+          resource.data.party2.uid == request.auth.uid ||
+          resource.data.party2.email == request.auth.token.email
+        )) ||
+        isAdmin()
       );
 
       // Allow create if authenticated and setting themselves as creator
       allow create: if isAuthenticated() && 
         request.resource.data.createdBy == request.auth.uid &&
-        request.resource.data.status == 'defense1';
+        (request.resource.data.status == 'defense1' || request.resource.data.status == 'setup');
 
       // Allow update if owner or assigned party2
       allow update: if isAuthenticated() && (
         resource.data.createdBy == request.auth.uid || 
-        resource.data.party2.uid == request.auth.uid ||
-        resource.data.party2.email == request.auth.token.email
+        (resource.data.party2 != null && (
+          resource.data.party2.uid == request.auth.uid ||
+          resource.data.party2.email == request.auth.token.email
+        )) ||
+        isAdmin()
       ) && 
       // Immutable fields
       request.resource.data.createdBy == resource.data.createdBy &&
       request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if isAdmin();
     }
   }
 }

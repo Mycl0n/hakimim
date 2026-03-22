@@ -8,6 +8,7 @@ import {
   ChevronRight, 
   RotateCcw, 
   ShieldAlert,
+  ShieldCheck,
   FileText,
   Stamp,
   LogIn,
@@ -94,6 +95,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const stepRef = React.useRef<Step>(step);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
 
   // Auth Form State
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'google'>('google');
@@ -181,7 +187,7 @@ export default function App() {
         return Array.from(new Map(combined.map(item => [item.id, item])).values())
           .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       });
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'cases'));
 
     const unsubPast2 = onSnapshot(qPast2, (snap) => {
       const cases = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CaseData));
@@ -190,7 +196,7 @@ export default function App() {
         return Array.from(new Map(combined.map(item => [item.id, item])).values())
           .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       });
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'cases'));
 
     return () => {
       unsubMy();
@@ -202,11 +208,48 @@ export default function App() {
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
-  // Request Notification Permission
+  // Helper to convert VAPID key
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  // Request Notification Permission and Subscribe to Push
   const requestNotificationPermission = async () => {
-    if (!("Notification" in window)) return;
-    const permission = await Notification.requestPermission();
-    setNotificationsEnabled(permission === 'granted');
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
+    
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+
+      const registration = await navigator.serviceWorker.ready;
+      
+      // Get VAPID public key from server
+      const response = await fetch('/api/vapid-public-key');
+      const { publicKey } = await response.json();
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+
+      // Send subscription to server
+      await fetch('/api/subscribe', {
+        method: 'POST',
+        body: JSON.stringify(subscription),
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      setNotificationsEnabled(true);
+    } catch (err) {
+      console.error("Subscription failed:", err);
+    }
   };
 
   useEffect(() => {
@@ -214,24 +257,6 @@ export default function App() {
       setNotificationsEnabled(Notification.permission === 'granted');
     }
   }, []);
-
-  // Watch for case updates and notify
-  useEffect(() => {
-    if (!notificationsEnabled || activeCases.length === 0) return;
-    
-    // Simple logic: if a case status changed or a new case appeared
-    const lastCase = activeCases[0];
-    if (lastCase && lastCase.updatedAt) {
-      const now = new Date().getTime();
-      const updated = lastCase.updatedAt.toDate().getTime();
-      if (now - updated < 5000) { // If updated in last 5 seconds
-        new Notification("Dijital Kadı Güncellemesi", {
-          body: `"${lastCase.subject}" davasında yeni bir gelişme var!`,
-          icon: "/icon-192.png"
-        });
-      }
-    }
-  }, [activeCases, notificationsEnabled]);
 
   // Real-time Case Sync
   useEffect(() => {
@@ -249,12 +274,12 @@ export default function App() {
           const updatedParty2 = { ...data.party2 };
 
           if (isParty1) {
-            if (step === 'defense1' && !data.party1.defense) updatedParty1.defense = prev.party1.defense;
-            if (step === 'cross_exam_questions' && !data.party1.isAnswerSaved) updatedParty1.answer = prev.party1.answer;
+            if (stepRef.current === 'defense1' && !data.party1.defense) updatedParty1.defense = prev.party1.defense;
+            if (stepRef.current === 'cross_exam_questions' && !data.party1.isAnswerSaved) updatedParty1.answer = prev.party1.answer;
           }
           if (isParty2) {
-            if (step === 'defense2' && !data.party2.defense) updatedParty2.defense = prev.party2.defense;
-            if (step === 'cross_exam_questions' && !data.party2.isAnswerSaved) updatedParty2.answer = prev.party2.answer;
+            if (stepRef.current === 'defense2' && !data.party2.defense) updatedParty2.defense = prev.party2.defense;
+            if (stepRef.current === 'cross_exam_questions' && !data.party2.isAnswerSaved) updatedParty2.answer = prev.party2.answer;
           }
 
           return { 
@@ -266,7 +291,7 @@ export default function App() {
         });
 
         // Auto-advance step if remote update happens
-        if (data.status !== step && data.status !== 'waiting') {
+        if (data.status !== stepRef.current && data.status !== 'waiting') {
           setStep(data.status);
         }
       }
@@ -274,7 +299,7 @@ export default function App() {
       handleFirestoreError(err, OperationType.GET, `cases/${caseData.id}`);
     });
     return () => unsubscribe();
-  }, [caseData.id, step, user?.uid]);
+  }, [caseData.id, user?.uid]);
 
   // Handle URL Case ID (Joining a case)
   useEffect(() => {
